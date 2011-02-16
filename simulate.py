@@ -3,13 +3,34 @@
 import isa
 from ppc import FPRegister, IntRegister, RegisterFile
 import itertools
+from collections import OrderedDict
 
-def decrement(dct):
-    for x in list(dct.keys()):
-        if dct[x] <= 1:
-            del dct[x]
-        else:
-            dct[x] -= 1
+class Pipeline:
+    def __init__(self,name,**args):
+        self.name = name
+        self.dict = OrderedDict(args)
+    def __getitem__(self,key): return self.dict.__getitem__(key)
+    def __setitem__(self,key,val): return self.dict.__setitem__(key,val)
+    def has_key(self,key): return self.dict.__contains__(key)
+    def __repr__(self):
+        return 'Pipeline(%s,%r)' % (self.name,', '.join('%s=%s' % (key,val) for (key,val) in self.dict.items()))
+    def stall(self, needed):
+        stall = 0
+        for x in needed:
+            stall = max(stall, self.dict.get(x,0))
+        return stall
+    def conflicts(self, needed):
+        conflict = OrderedDict()
+        for x in needed:
+            if x in self.dict:
+                conflict[x] = self.dict[x]
+        return conflict
+    def retire(self, cycles=1):
+        for k,v in list(self.dict.items()):
+            if v <= cycles:
+                del self.dict[k]
+            else:
+                self.dict[k] -= cycles
 
 class Core:
     memsize = 32                # Number of doubles
@@ -20,8 +41,8 @@ class Core:
         self.fp = fp
         self.int = int
         self.mem = mem # size of L1 cache
-        self.hazards = dict()
-        self.units = dict()
+        self.hazards = Pipeline('Register')
+        self.units = Pipeline('Logic Unit')
     def __str__(self):
         return ('Core(cycle=%r,\n\tfp=%s,\n\tint=%s,\n\tmem=%r)'
                 % (self.cycle,self.fp,self.int,self.mem))
@@ -30,8 +51,8 @@ class Core:
                 % (self.cycle,self.fp,self.int,self.mem))
     def next_cycle(self):
         self.cycle += 1
-        decrement(self.hazards)
-        decrement(self.units)
+        self.hazards.retire()
+        self.units.retire()
     def trace(self,msg):
         if isinstance(msg,isa.Instruction):
             print('[%2d] %s' % (self.cycle,msg))
@@ -39,11 +60,11 @@ class Core:
             print('[%2d] -- %s' % (self.cycle,msg))
     def execute(self,code):
         for instr in code:
-            if instr.unit in self.units:
+            while self.units.stall((instr.unit,)) > 0:
                 self.trace('Instruction unit in use: %s' % (instr.unit,))
                 self.next_cycle()
-            while not instr.read.isdisjoint(self.hazards):
-                self.trace('Register hazards: %s' % (self.hazards,))
+            while self.hazards.stall(instr.read) > 0:
+                self.trace('Register hazards: %s' % (self.hazards.conflicts(instr.read)))
                 self.next_cycle()
             self.trace(instr)
             instr.run(self)
