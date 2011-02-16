@@ -4,6 +4,8 @@ class Instruction:
     def __init__(self):
         self.read = set()
         self.write = set()
+        self.iread = set()
+        self.iwrite = set()
         self.saved = dict()
         self.uses(None,0)
     def run(self,c):
@@ -12,6 +14,10 @@ class Instruction:
         self.write = set(args)
     def reads(self,*args):
         self.read = set(args)
+    def iwrites(self,*args):
+        self.iwrite = set(args)
+    def ireads(self,*args):
+        self.iread = set(args)
     def uses(self,unit,latency,ithroughput=1):
         self.unit = unit
         self.latency = latency
@@ -60,6 +66,7 @@ class fpset2(Instruction):
 
 class fxcxma(Instruction):
     def __init__(self,r0,r1,r2,r3):
+        Instruction.__init__(self)
         self.save(r0=r0,r1=r1,r2=r2,r3=r3)
         self.reads(r1,r2,r3)
         self.writes(r0)
@@ -71,6 +78,7 @@ class fxcxma(Instruction):
 
 class fxcpmadd(Instruction):
     def __init__(self,r0,r1,r2,r3):
+        Instruction.__init__(self)
         self.save(r0=r0,r1=r1,r2=r2,r3=r3)
         self.reads(r1,r2,3)
         self.writes(r0)
@@ -82,9 +90,11 @@ class fxcpmadd(Instruction):
 
 class lfpdux(Instruction):
     def __init__(self,frt,ra,rb):
+        Instruction.__init__(self)
         self.save(frt=frt,ra=ra,rb=rb)
-        self.reads(ra,rb)
-        self.writes(frt,ra)
+        self.ireads(ra,rb)
+        self.writes(frt)
+        self.iwrite(ra)
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],c.int[self.rb])
@@ -93,9 +103,11 @@ class lfpdux(Instruction):
 
 class lfpdu(Instruction):
     def __init__(self,frt,ra,d):
+        Instruction.__init__(self)
         self.save(frt=frt,ra=ra,d=d)
-        self.reads(ra)
-        self.writes(frt,ra)
+        self.ireads(ra)
+        self.writes(frt)
+        self.iwrites(ra)
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],self.d)
@@ -104,8 +116,9 @@ class lfpdu(Instruction):
 
 class lfpd(Instruction):
     def __init__(self,frt,ra,d):
+        Instruction.__init__(self)
         self.save(frt=frt,ra=ra,d=d)
-        self.reads(ra)
+        self.ireads(ra)
         self.writes(frt)
         self.uses(PPC.LS,6,2)
     def run(self,c):
@@ -114,8 +127,9 @@ class lfpd(Instruction):
 
 class lfd(Instruction):
     def __init__(self,frt,ra,d):
+        Instruction.__init__(self)
         self.save(frt=frt,ra=ra,d=d)
-        self.reads(ra)
+        self.ireads(ra)
         self.writes(frt)
         self.uses(PPC.LS,6,2)
     def run(self,c):
@@ -124,9 +138,11 @@ class lfd(Instruction):
 
 class lfdu(Instruction):
     def __init__(self,frt,ra,d):
+        Instruction.__init__(self)
         self.save(frt=frt,ra=ra,d=d)
-        self.reads(ra)
-        self.writes(frt,ra)
+        self.ireads(ra)
+        self.writes(frt)
+        self.iwrites(ra)
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],self.d)

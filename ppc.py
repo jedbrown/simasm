@@ -61,6 +61,8 @@ class RegisterFile:
         assert(treg.name == reg)
         assert(isinstance(rval,treg.val.__class__))
         treg.val = rval
+    def keys(self):
+        return (x.name for x in self.bank)
     def get(self,*regs):
         return map(self.__getitem__,regs)
 
