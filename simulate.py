@@ -2,6 +2,7 @@
 
 import isa
 from ppc import FPRegister, IntRegister, RegisterFile
+import itertools
 
 def decrement(dct):
     for x in list(dct.keys()):
@@ -69,8 +70,41 @@ def test():
                # need a store
                isa.inspect()])
 
+def stencil():
+    def label(c,i,j,kp,ks):
+        return '%s_%d_%d_%d%d' % (c,i,j,kp,ks)
+    def stream(i,j):
+        def a(kp,ks): return label('a',i,j,kp,ks)
+        p = 'p_%d_%d' % (i,j)
+        yield isa.lfpd(a(0,1),p,0)
+        for k in itertools.count(2,2):
+            yield isa.lfdu(a(k,k-1),p,16)
+            yield isa.lfpd(a(k,k+1),p,0)
+    def jam(i,j):
+        def r(kp,ks): return label('r',i,j,kp,ks)
+        for k in itertools.count(2,2):
+            rr = r(k,k-1)
+            for ii in (-1,0,1):
+                for jj in (-1,0,1):
+                    def a(kp,ks): return label('a',i+ii,j+jj,kp,ks)
+                    yield isa.fxcpmadd(rr,'w01',a(k,k-1),rr)
+                    yield isa.fxcxma(rr,'w01',a(k,k+1),rr)
+                    yield isa.fxcpmadd(rr,'w2x',a(k+2,k+1),rr)
+    instrs = []
+    for i in (0,1,2):
+        for j in (0,1,2):
+            instrs.append(stream(i,j))
+    instrs.append(jam(1,1))
+    yield isa.fpset2('w01',1/9,2/9)
+    yield isa.fpset2('w2x',1/9,9)
+    while True:
+        for ins in instrs:
+            yield next(ins)
+
 def main():
     test()
+    for instr in itertools.islice(stencil(),40):
+        print(instr)
 
 if __name__ == '__main__':
     main()
