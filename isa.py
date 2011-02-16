@@ -12,9 +12,10 @@ class Instruction:
         self.write = set(args)
     def reads(self,*args):
         self.read = set(args)
-    def uses(self,unit,latency):
+    def uses(self,unit,latency,ithroughput=1):
         self.unit = unit
         self.latency = latency
+        self.ithroughput = ithroughput
     def save(self,**args):
         self.saved = args
         self.__dict__.update(args)
@@ -84,7 +85,7 @@ class lfpdux(Instruction):
         self.save(frt=frt,ra=ra,rb=rb)
         self.reads(ra,rb)
         self.writes(frt,ra)
-        self.uses(PPC.LS,6)
+        self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],c.int[self.rb])
         c.fp[self.frt] = FPVal(c.mem[ea], c.mem[ea+1])
@@ -95,7 +96,7 @@ class lfpdu(Instruction):
         self.save(frt=frt,ra=ra,d=d)
         self.reads(ra)
         self.writes(frt,ra)
-        self.uses(PPC.LS,6)
+        self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],self.d)
         c.fp[self.frt] = FPVal(c.mem[ea], c.mem[ea+1])
@@ -106,7 +107,7 @@ class lfpd(Instruction):
         self.save(frt=frt,ra=ra,d=d)
         self.reads(ra)
         self.writes(frt)
-        self.uses(PPC.LS,6)
+        self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],self.d)
         c.fp[self.frt] = FPVal(c.mem[ea], c.mem[ea+1])
@@ -116,7 +117,7 @@ class lfd(Instruction):
         self.save(frt=frt,ra=ra,d=d)
         self.reads(ra)
         self.writes(frt)
-        self.uses(PPC.LS,6)
+        self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],self.d)
         c.fp[self.frt] = FPVal(c.mem[ea], c.fp[self.frt].s)
@@ -126,7 +127,7 @@ class lfdu(Instruction):
         self.save(frt=frt,ra=ra,d=d)
         self.reads(ra)
         self.writes(frt,ra)
-        self.uses(PPC.LS,6)
+        self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],self.d)
         c.fp[self.frt] = FPVal(c.mem[ea], c.fp[self.frt].s)

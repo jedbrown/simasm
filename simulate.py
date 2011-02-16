@@ -3,6 +3,13 @@
 import isa
 from ppc import FPRegister, IntRegister, RegisterFile
 
+def decrement(dct):
+    for x in list(dct.keys()):
+        if dct[x] <= 1:
+            del dct[x]
+        else:
+            dct[x] -= 1
+
 class Core:
     memsize = 32                # Number of doubles
     fpregisters = 8
@@ -13,7 +20,7 @@ class Core:
         self.int = int
         self.mem = mem # size of L1 cache
         self.hazards = dict()
-        self.units = set()
+        self.units = dict()
     def __str__(self):
         return ('Core(cycle=%r,\n\tfp=%s,\n\tint=%s,\n\tmem=%r)'
                 % (self.cycle,self.fp,self.int,self.mem))
@@ -22,14 +29,13 @@ class Core:
                 % (self.cycle,self.fp,self.int,self.mem))
     def next_cycle(self):
         self.cycle += 1
-        for reg in list(self.hazards.keys()):
-            if self.hazards[reg] <= 1:
-                del self.hazards[reg]
-            else:
-                self.hazards[reg] -= 1
-        self.units.clear()
+        decrement(self.hazards)
+        decrement(self.units)
     def trace(self,msg):
-        print('[%2d] %s' % (self.cycle,str(msg)))
+        if isinstance(msg,isa.Instruction):
+            print('[%2d] %s' % (self.cycle,msg))
+        else:
+            print('[%2d] -- %s' % (self.cycle,msg))
     def execute(self,code):
         for instr in code:
             if instr.unit in self.units:
@@ -39,8 +45,8 @@ class Core:
                 self.trace('Register hazards: %s' % (self.hazards,))
                 self.next_cycle()
             self.trace(instr)
-            self.units.add(instr.unit)
             instr.run(self)
+            self.units[instr.unit] = instr.ithroughput
             for reg in instr.write:
                 self.hazards[reg] = instr.latency
 
