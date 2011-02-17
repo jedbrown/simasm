@@ -48,25 +48,31 @@ class Core:
         self.regnames = dict()
         self.fppool = set(self.fp.keys())
     def __str__(self):
-        return ('Core(cycle=%r,\n\tfp=%s,\n\tint=%s,\n\tmem=%r)'
-                % (self.cycle,self.fp,self.int,self.mem))
+        return ('Core(cycle=%r,\n\tfp=%s,\n\tint=%s,\n\tmem=%r,\n\tregnames=%s)'
+                % (self.cycle,self.fp,self.int,self.mem,self.regnames))
     def __repr__(self):
-        return ('Core(cycle=%r,\n\tfp=%r,\n\tint=%r,\n\tmem=%r)'
-                % (self.cycle,self.fp,self.int,self.mem))
+        return ('Core(cycle=%r,\n\tfp=%r,\n\tint=%r,\n\tmem=%r,\n\tregnames=%r)'
+                % (self.cycle,self.fp,self.int,self.mem,self.regnames))
     def flush_pipeline(self):
         self.hazards.flush()
         self.units.flush()
-    def get_fpregister(self,reg,auto=True):
+    def name_registers(self,**args):
+        self.regnames.update(args)
+    def get_fpregister(self,reg,allocate=True):
         if isinstance(reg,Register): # The register has been named explicitly
             self.fppool.discard(reg)
             return reg
-        else:                   # It is a string, find a concrete register
+        elif isinstance(reg,str): # It is a string, find a concrete register
             phys = self.regnames.get(reg)
             if phys is None:
-                if not auto: raise Exception('Register "%s" has not been assigned a physical register yet' % (reg,))
+                if not allocate: raise Exception('Register "%s" has not been allocated' % (reg,))
                 phys = self.fppool.pop()
                 self.regnames[reg] = phys
             return phys
+        else:
+            raise Exception('Invalid register: %r' % reg)
+    def access_fpregisters(self,*args):
+        return (self.fp[self.get_fpregister(reg)] for reg in args)
     def next_cycle(self):
         self.cycle += 1
         self.hazards.retire()
@@ -93,27 +99,25 @@ class Core:
             self.execute_one(instr)
     def cost(self,instr):
         return max(self.units.stall((instr.unit,)),
-                   self.hazards.stall((self.get_fpregister(reg,auto=False) for reg in instr.read)))
-    def ready(self,instr):
-        return all(self.get_fpregister(reg) for reg in instr.read)
-    def schedule_one(self,istreams):
-        candidates = [(i,istream[0],self.cost(istream[0])) for (i,istream) in enumerate(istreams) if self.ready(istream[0])]
-        candidates.sort(key=lambda c:c[2])
-        for (i,instr,cost) in candidates:
-            if self.ready(instr):
-                self.execute_one(instr)
-                # advance stream and move it to the back so that we consider it last when using a stable sort
-                stream = istreams.pop(i)
-                del stream[0]
-                if len(stream) > 0:
-                    istreams.append(stream)
-                return
-            else:
-                self.trace('Not ready: %s',instr)
-        raise Exception('Cannot find a safe instruction with search depth 1')
-    def schedule(self,istreams):
-        while any(len(s) > 0 for s in istreams):
-            self.schedule_one(istreams)
+                   self.hazards.stall((self.get_fpregister(reg,allocate=False) for reg in instr.read)))
+    def schedule_one(self,istream):
+        def get_candidates(stream):
+            'generator for safe instructions'
+            modified = set()
+            for instr in stream:
+                if modified.isdisjoint(instr.read.union(instr.iread)):
+                    yield instr
+                modified.update(instr.write)
+                modified.update(instr.iwrite)
+        candidates = list(enumerate(get_candidates(istream)))
+        if len(candidates) < 1:
+            raise Exception('Cannot find a safe instruction')
+        (i,instr) = min(candidates, key=lambda c:self.cost(c[1]))
+        self.execute_one(instr)
+        del istream[i]
+    def schedule(self,istream):
+        while len(istream) > 0:
+            self.schedule_one(istream)
 
 def test():
     c = Core()
@@ -134,20 +138,26 @@ def test():
                # need a store
                isa.inspect()]
     c.execute(istream)
-    print()
-    c.flush_pipeline()
+
+def test_alloc():
+    c = Core()
+    (r21,s21,w01,w2x) = map(FPRegister,range(4))
+    (i0,i1) = map(IntRegister,(0,1))
+    c.mem[:32] = map(float,range(32))
+    c.name_registers(a21=FPRegister(4),b21=FPRegister(5))
     c.schedule([
-            [isa.lfpd(a23,i0,16),
-             isa.lfpd(b23,i1,16),
-             isa.lfdu(a23,i0,16),
-             isa.lfdu(b23,i1,16),
-             ],
-            [isa.fxcpmadd(r21,w01,a21,r21),
-             isa.fxcpmadd(s21,w01,b21,s21),
-             isa.fxcxma(r21,w01,a23,r21),
-             isa.fxcxma(s21,w01,b23,s21),
-             ],
+            isa.fpset2(w01,1/9,2/9),
+            isa.fpset2(w2x,1/9,-1),
+            isa.lfpd('a23',i0,16),
+            isa.lfpd('b23',i1,16),
+            isa.lfdu('a23',i0,16),
+            isa.lfdu('b23',i1,16),
+            isa.fxcpmadd(r21,w01,'a21',r21),
+            isa.fxcpmadd(s21,w01,'b21',s21),
+            isa.fxcxma(r21,w01,'a23',r21),
+            isa.fxcxma(s21,w01,'b23',s21),
             ])
+    c.execute([isa.inspect()])
 
 def stencil():
     def label(c,i,j,kp,ks):
@@ -182,7 +192,9 @@ def stencil():
 
 def main():
     test()
-    for instr in itertools.islice(stencil(),100):
+    print()
+    test_alloc()
+    for instr in itertools.islice(stencil(),10):
         print(instr)
 
 if __name__ == '__main__':

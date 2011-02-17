@@ -56,13 +56,13 @@ class inspect(Instruction):
 
 class fpset2(Instruction):
     '''Not a real instruction, but handy for debugging/prologue'''
-    def __init__(self,fpr,p,s):
+    def __init__(self,frt,p,s):
         Instruction.__init__(self)
-        self.save(fpr=fpr,p=float(p),s=float(s))
-        self.writes(fpr)
+        self.save(frt=frt,p=float(p),s=float(s))
+        self.writes(frt)
         self.uses(PPC.FP,6)
     def run(self,c):
-        c.fp[self.fpr] = FPVal(self.p,self.s)
+        c.fp[c.get_fpregister(self.frt)] = FPVal(self.p,self.s)
 
 class fxcxma(Instruction):
     def __init__(self,r0,r1,r2,r3):
@@ -72,21 +72,21 @@ class fxcxma(Instruction):
         self.writes(r0)
         self.uses(PPC.FP,5)
     def run(self,c):
-        r1,r2,r3 = map(c.fp.__getitem__,(self.r1,self.r2,self.r3))
-        c.fp[self.r0] = FPVal(r1.s*r2.s + r3.p,
-                              r1.s*r2.p + r3.s)
+        r1,r2,r3 = c.access_fpregisters(self.r1,self.r2,self.r3)
+        c.fp[c.get_fpregister(self.r0)] = FPVal(r1.s*r2.s + r3.p,
+                                                r1.s*r2.p + r3.s)
 
 class fxcpmadd(Instruction):
     def __init__(self,r0,r1,r2,r3):
         Instruction.__init__(self)
         self.save(r0=r0,r1=r1,r2=r2,r3=r3)
-        self.reads(r1,r2,3)
+        self.reads(r1,r2,r3)
         self.writes(r0)
         self.uses(PPC.FP,5)
     def run(self,c):
-        r1,r2,r3 = map(c.fp.__getitem__,(self.r1,self.r2,self.r3))
-        c.fp[self.r0] = FPVal(r1.p * r2.p + r3.p,
-                              r1.p * r2.s + r3.s)
+        r1,r2,r3 = c.access_fpregisters(self.r1,self.r2,self.r3)
+        c.fp[c.get_fpregister(self.r0)] = FPVal(r1.p * r2.p + r3.p,
+                                                r1.p * r2.s + r3.s)
 
 class lfpdux(Instruction):
     def __init__(self,frt,ra,rb):
@@ -98,7 +98,7 @@ class lfpdux(Instruction):
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],c.int[self.rb])
-        c.fp[self.frt] = FPVal(c.mem[ea], c.mem[ea+1])
+        c.fp[c.get_fpregister(self.frt)] = FPVal(c.mem[ea], c.mem[ea+1])
         c.int[self.ra] = IntVal(ea*PPC.WORD_SIZE)
 
 class lfpdu(Instruction):
@@ -111,7 +111,7 @@ class lfpdu(Instruction):
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],self.d)
-        c.fp[self.frt] = FPVal(c.mem[ea], c.mem[ea+1])
+        c.fp[c.get_fpregister(self.frt)] = FPVal(c.mem[ea], c.mem[ea+1])
         c.int[self.ra] = IntVal(ea*8)
 
 class lfpd(Instruction):
@@ -123,7 +123,7 @@ class lfpd(Instruction):
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],self.d)
-        c.fp[self.frt] = FPVal(c.mem[ea], c.mem[ea+1])
+        c.fp[c.get_fpregister(self.frt)] = FPVal(c.mem[ea], c.mem[ea+1])
 
 class lfd(Instruction):
     def __init__(self,frt,ra,d):
@@ -134,7 +134,8 @@ class lfd(Instruction):
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],self.d)
-        c.fp[self.frt] = FPVal(c.mem[ea], c.fp[self.frt].s)
+        frt = c.get_fpregister(self.frt)
+        c.fp[frt] = FPVal(c.mem[ea], c.fp[frt].s)
 
 class lfdu(Instruction):
     def __init__(self,frt,ra,d):
@@ -146,5 +147,6 @@ class lfdu(Instruction):
         self.uses(PPC.LS,6,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],self.d)
-        c.fp[self.frt] = FPVal(c.mem[ea], c.fp[self.frt].s)
+        frt = c.get_fpregister(self.frt)
+        c.fp[frt] = FPVal(c.mem[ea], c.fp[frt].s)
         c.int[self.ra] = IntVal(ea*8)
