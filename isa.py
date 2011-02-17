@@ -60,9 +60,19 @@ class fpset2(Instruction):
         Instruction.__init__(self)
         self.save(frt=frt,p=float(p),s=float(s))
         self.writes(frt)
-        self.uses(PPC.FP,6)
+        self.uses(PPC.FP,1)
     def run(self,c):
         c.fp[c.get_fpregister(self.frt)] = FPVal(self.p,self.s)
+
+class intset(Instruction):
+    '''Not a real instruction, but handy for debugging/prologue'''
+    def __init__(self,ra,val):
+        Instruction.__init__(self)
+        self.save(ra=ra,val=int(val))
+        self.iwrites(ra)
+        self.uses(PPC.INT,1)
+    def run(self,c):
+        c.int[self.ra] = IntVal(self.val)
 
 class fxcxma(Instruction):
     def __init__(self,r0,r1,r2,r3):
@@ -149,4 +159,19 @@ class lfdu(Instruction):
         ea = fpeaddr(c.int[self.ra],self.d)
         frt = c.get_fpregister(self.frt)
         c.fp[frt] = FPVal(c.mem[ea], c.fp[frt].s)
+        c.int[self.ra] = IntVal(ea*8)
+
+class stfxdux(Instruction):
+    def __init__(self,frs,ra,rb):
+        Instruction.__init__(self)
+        self.save(frs=frs,ra=ra,rb=rb)
+        self.reads(frs)
+        self.ireads(ra,rb)
+        self.iwrites(ra)
+        self.uses(PPC.LS,2,2)
+    def run(self,c):
+        ea = fpeaddr(c.int[self.ra],c.int[self.rb])
+        (frs,) = c.access_fpregisters(self.frs)
+        c.mem[ea] = frs.s
+        c.mem[ea+1] = frs.p
         c.int[self.ra] = IntVal(ea*8)
