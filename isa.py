@@ -171,7 +171,7 @@ class fxsmul(Instruction):
         c.fp[c.get_fpregister(self.rt)] = FPVal(ra.s * rc.p,
                                                 ra.s * rc.s)
 
-class fadd(Instruction):
+class fpadd(Instruction):
     def __init__(self,rt,ra,rb):
         Instruction.__init__(self)
         self.save(locals(),'rt ra rb')
@@ -351,3 +351,30 @@ class stfpdux(Instruction):
         c.mem[ea] = frs.p
         c.mem[ea+1] = frs.s
         c.int[self.ra] = IntVal(ea*8)
+
+class stfsdx(Instruction):
+    def __init__(self,frs,ra,rb):
+        Instruction.__init__(self)
+        self.save(locals(),'frs ra rb')
+        self.reads(frs)
+        self.ireads(ra,rb)
+        self.iwrites(ra)
+        self.uses(PPC.LS,store_latency,2,writethrough=16)
+    def run(self,c):
+        ea = fpeaddr(c.int[self.ra],c.int[self.rb])
+        (frs,) = c.access_fpregisters(self.frs)
+        c.mem[ea] = frs.s
+
+class stfdx(Instruction):
+    def __init__(self,frs,ra,rb):
+        Instruction.__init__(self)
+        self.save(locals(),'frs ra rb')
+        self.reads(frs)
+        self.ireads(ra,rb)
+        self.iwrites(ra)
+        self.uses(PPC.LS,store_latency,2,writethrough=16)
+    def run(self,c):
+        ea = fpeaddr(c.int[self.ra],c.int[self.rb])
+        (frs,) = c.access_fpregisters(self.frs)
+        c.mem[ea] = frs.p
+        
