@@ -16,7 +16,7 @@ class CViewer:
             fp_names = '// ' + '%s:%s' % (fp_reg.num, list(i.saved.items())[0][1])
             inline_str = '    asm volatile("%s %s, %%0, %%1":"+b" (%s):"b" (%s));' % (i.__class__.__name__,
                            fp_reg.num,i.saved['ra'].c_var,i.saved['rb'].c_var)
-            if 'u' not in i.__class__.__name__: inline_str = inline_str.replace(':','::',1)
+            #if 'u' not in i.__class__.__name__: inline_str = inline_str.replace('+','=',1)
 
             return inline_str.ljust(70) + fp_names
         
