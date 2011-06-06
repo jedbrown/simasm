@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-from ppcasm import isa
-from ppcasm.ppc import Register, FPRegister, IntRegister, RegisterFile
+from simasm.ppcasm import isa
+from simasm.ppcasm.ppc import Register, FPRegister, IntRegister, RegisterFile
 import itertools
 from collections import OrderedDict, deque, defaultdict
-from ppcasm.view import CViewer
+from simasm.ppcasm.view import CViewer
 
 def dict_retire(d, cycles=1):
     for k,v in list(d.items()):

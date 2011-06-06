@@ -1,4 +1,4 @@
-from ppcasm.ppc import PPC, FPVal, IntVal
+from simasm.ppcasm.ppc import PPC, FPVal, IntVal
 from collections import OrderedDict as odict
 
 load_latency = 4
@@ -40,7 +40,7 @@ class Instruction:
                            ', '.join([('%s=%r' % (k,v)) for (k,v) in self.saved.items()]))
 
 def fpeaddr(ra,x):
-    from ppcasm.ppc import IntRegister
+    from simasm.ppcasm.ppc import IntRegister
     def chk(addr):
         if addr % 8 != 0:
             raise Exception('Computed effective address that is not a multiple of sizeof(double)')
