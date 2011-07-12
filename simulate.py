@@ -139,10 +139,12 @@ class Core:
         while self.units.stall((instr.unit,)) > 0:
             self.trace('Instruction unit in use: %s' % (instr.unit,))
             self.next_cycle()
-        while self.hazards.stall(map(self.get_fpregister,instr.read)) > 0:
+        iread = dict((self.get_fpregister(n),n) for n in instr.read)
+        iwrite = dict((self.get_fpregister(n),n) for n in instr.write)
+        while self.hazards.stall(iread) > 0:
             def format_hazards(odict):
-                return ', '.join('(%s:%s,%d)' % (reg,self.get_fpregister(reg,allocate=False),cost) for (reg,cost) in odict.items())
-            self.trace('Register hazards: %s' % format_hazards(self.hazards.conflicts(instr.read)))
+                return ', '.join('(%s:%s,%d)' % (iread[reg],reg,cost) for (reg,cost) in odict.items())
+            self.trace('Register hazards: %s' % format_hazards(self.hazards.conflicts(iread)))
             self.next_cycle()
         while self.writethrough.stall(instr.writethrough):
             self.trace('WriteThrough tokens in use')
@@ -152,7 +154,7 @@ class Core:
         self.print_inline(instr)
         self.counter[instr.unit] += 1
         self.units[instr.unit] = instr.ithroughput
-        for reg in instr.write:
+        for reg in iwrite:
             self.hazards[reg] = instr.latency
         self.writethrough.issue(instr.writethrough)
     def execute(self,code):
