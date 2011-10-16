@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 
-import isa
-from ppc import Register, FPRegister, IntRegister, RegisterFile
+from ppcasm import isa
+from ppcasm.ppc import Register, FPRegister, IntRegister, RegisterFile
 import itertools
 from collections import OrderedDict, deque, defaultdict
+from ppcasm.view import CViewer
+
+def dict_retire(d, cycles=1):
+    for k,v in list(d.items()):
+        if v <= cycles:
+            del d[k]
+        else:
+            d[k] -= cycles
 
 class Pipeline:
     def __init__(self,name,**args):
@@ -28,17 +36,37 @@ class Pipeline:
                 conflict[x] = self.dict[x]
         return conflict
     def retire(self, cycles=1):
-        for k,v in list(self.dict.items()):
-            if v <= cycles:
-                del self.dict[k]
-            else:
-                self.dict[k] -= cycles
+        dict_retire(self.dict, cycles)
+
+class WriteThrough:
+    def __init__(self, maxtokens=6, latency=40):
+        self.maxtokens = maxtokens
+        self.latency = latency
+        self.tokens = dict()
+        self.total_bytes = 0
+    def flush(self):
+        self.tokens.clear()
+    def stall(self, bytes):
+        if bytes == 0 or len(self.tokens) < self.maxtokens:
+            return 0
+        else:
+            return min(self.tokens.values())
+    def retire(self, cycles=1):
+        dict_retire(self.tokens, cycles)
+    def issue(self, bytes=0):
+        if self.stall(bytes):
+            raise Exception('Cannot issue WriteThrough, stall=%d' % (self.stall(bytes)))
+        if bytes > 0:
+            self.total_bytes += bytes
+            self.tokens[self.total_bytes] = self.latency # total_bytes is just a unique key
 
 class Core:
     memsize = 32                # Number of doubles
-    fpregisters = 10
-    intregisters = 6
-    def __init__(self,cycle=0,fp=None,int=None,mem=None):
+    fpregisters = 32
+    intregisters = 32
+    inline_asm = ''
+
+    def __init__(self,cycle=0,fp=None,int=None,mem=None,use_trace=False):
         self.cycle = cycle
         self.counter = defaultdict(lambda:0)
         self.fp = fp   if fp  is not None else RegisterFile(FPRegister,Core.fpregisters)
@@ -46,10 +74,12 @@ class Core:
         self.mem = mem if mem is not None else [0.0]*Core.memsize
         self.hazards = Pipeline('Register')
         self.units = Pipeline('Logic Unit')
+        self.writethrough = WriteThrough()
         self.regnames = dict()
         self.fppool = set(self.fp.keys())
         self.fpeternal = set()
-        self.trace = self.trace_print
+        self.trace = self.trace_print if use_trace else self.trace_none
+        self.use_trace = use_trace # storing this is a dirty hack, only used externally
     def __str__(self):
         return ('Core(cycle=%r,\n\tfp=%s,\n\tint=%s,\n\tmem=%r,\n\tregnames=%s,\n\tcounter=%s)'
                 % (self.cycle,self.fp,self.int,self.mem,self.regnames,dict(self.counter)))
@@ -59,6 +89,7 @@ class Core:
     def flush_pipeline(self):
         self.hazards.flush()
         self.units.flush()
+        self.writethrough.flush()
     def name_registers(self,**args):
         self.regnames.update(args)
         self.fppool.difference_update(args.values())
@@ -93,6 +124,7 @@ class Core:
         self.cycle += 1
         self.hazards.retire()
         self.units.retire()
+        self.writethrough.retire()
     def trace_none(self,msg):
         pass
     def trace_print(self,msg):
@@ -100,6 +132,9 @@ class Core:
             print('[%2d] %s' % (self.cycle,msg))
         else:
             print('[%2d] -- %s' % (self.cycle,msg))
+    def print_inline(self,instr):
+        cv = CViewer(self)
+        self.inline_asm += '%s\n' % cv.named_view(instr)
     def execute_one(self,instr):
         while self.units.stall((instr.unit,)) > 0:
             self.trace('Instruction unit in use: %s' % (instr.unit,))
@@ -109,28 +144,39 @@ class Core:
                 return ', '.join('(%s:%s,%d)' % (reg,self.get_fpregister(reg,allocate=False),cost) for (reg,cost) in odict.items())
             self.trace('Register hazards: %s' % format_hazards(self.hazards.conflicts(instr.read)))
             self.next_cycle()
+        while self.writethrough.stall(instr.writethrough):
+            self.trace('WriteThrough tokens in use')
+            self.next_cycle()
         self.trace(instr)
         instr.run(self)
+        self.print_inline(instr)
         self.counter[instr.unit] += 1
         self.units[instr.unit] = instr.ithroughput
         for reg in instr.write:
             self.hazards[reg] = instr.latency
+        self.writethrough.issue(instr.writethrough)
     def execute(self,code):
+        cycle_start = self.cycle
         for instr in code:
             self.execute_one(instr)
+        return self.cycle - cycle_start
     def cost(self,instr):
         cost = max(self.units.stall((instr.unit,)),
-                   self.hazards.stall((self.get_fpregister(reg,allocate=False) for reg in instr.read)))
+                   self.hazards.stall((self.get_fpregister(reg,allocate=False) for reg in instr.read)),
+                   self.writethrough.stall(instr.writethrough))
         return cost
     def schedule_one(self,istream):
         def get_candidates(stream):
             'generator for safe instructions'
-            modified = set()
+            stream_write = set() # Preserves order for read-after-write
+            stream_read  = set() # Preserves order for write-after-read
             for i,instr in enumerate(stream):
-                if modified.isdisjoint(instr.read.union(instr.iread)):
+                instr_read = instr.read.union(instr.iread)
+                instr_write = instr.write.union(instr.iwrite)
+                if stream_write.isdisjoint(instr_read) and stream_read.isdisjoint(instr_write):
                     yield i,instr
-                modified.update(instr.write)
-                modified.update(instr.iwrite)
+                stream_write.update(instr_write)
+                stream_read.update(instr_read)
         candidates = list(get_candidates(istream))
         if len(candidates) < 1:
             raise Exception('Cannot find a safe instruction')
@@ -138,14 +184,17 @@ class Core:
         self.execute_one(instr)
         del istream[i]
     def schedule(self,istream):
+        cycle_start = self.cycle
         while len(istream) > 0:
             self.schedule_one(istream)
+        return self.cycle - cycle_start
+
+def get_core(**kwargs):
+    c = Core(**kwargs)
+    c.mem[:32] = map(float,range(32))
+    return c
 
 def tests():
-    def get_core():
-        c = Core()
-        c.mem[:32] = map(float,range(32))
-        return c
     def merge(*streams):
         istreams = [iter(s) for s in streams]
         result = []
@@ -253,7 +302,7 @@ def stencil():
     while True:
         for ins in instrs:
             yield next(ins)
-
+   
 def main():
     tests()
     # for instr in itertools.islice(stencil(),10):

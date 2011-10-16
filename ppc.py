@@ -21,9 +21,10 @@ class FPRegister(Register):
     def empty(self):
         return FPVal(0.0,0.0)
 class IntRegister(Register):
-    def __init__(self,num,val=0):
+    def __init__(self,num,c_var='',val=0):
         self.num = num
         self.name = 'Int_%02d' % (num,)
+        self.c_var = c_var
     def __repr__(self):
         return 'IntRegister(%d)' % (self.num,)
     def empty(self):
