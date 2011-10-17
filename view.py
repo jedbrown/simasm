@@ -6,11 +6,17 @@ class CViewer:
         return 'asm volatile("' + i.__class__.__name__  + ' ' + ', '.join(repr(r.num) for r in i.saved.values()) + '"); '
     def named_view(self, i):
         if i.__class__.__name__[0] == 'f':
-            inline_str = '    asm volatile("%s %s");' % (i.__class__.__name__,
-                               ', '.join([('%d' % self.c.get_fpregister(k).num) for (temp, k) in i.saved.items()]))
-            fp_names = '// ' + ', '.join(['%d:%s' % (self.c.get_fpregister(k).num, k) for (temp, k) in i.saved.items()])
-
-            return inline_str.ljust(70) + fp_names
+            if self.c.no_fma==0:
+                inline_str = '    asm volatile("%s %s");' % (i.__class__.__name__,
+                                   ', '.join([('%d' % self.c.get_fpregister(k).num) for (temp, k) in i.saved.items()]))
+                fp_names = '// ' + ', '.join(['%d:%s' % (self.c.get_fpregister(k).num, k) for (temp, k) in i.saved.items()])
+    
+                return inline_str.ljust(70) + fp_names
+            else:
+                return ""
+        elif i.__class__.__name__[0] == 'n': #nop instruction
+            if self.c.no_fma==0:
+                return '    asm volatile("nop");'
         else:
             fp_reg = self.c.get_fpregister(list(i.saved.items())[0][1])
             fp_names = '// ' + '%s:%s' % (fp_reg.num, list(i.saved.items())[0][1])

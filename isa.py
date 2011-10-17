@@ -4,6 +4,11 @@ from collections import OrderedDict as odict
 load_latency = 4
 store_latency = 0                # not actually meaningful
 fp_latency = 5
+store_cycles = 4
+fpreg_store_source_latency = 2 # Number of cycles the register is unavailable to be the source register for an FP operation
+fpreg_store_dest_latency = 2 # Number of cycles the register is unavailable to be the destination of a FP operation
+fpreg_load_source_latency = 5 # Number of cycles the register is unavailable to be the source register for an FP operation
+fpreg_load_dest_latency = 5 # Number of cycles the register is unavailable to be the destination of a FP operation
 
 class Instruction:
     def __init__(self, pragmatic=False):
@@ -13,6 +18,7 @@ class Instruction:
         self.iwrite = set()
         self.saved = odict()
         self.uses(None,0)
+        self.inuse_regs = dict()
         self.pragmatic = pragmatic
     def run(self,c):
         raise Exception('Not implemented')
@@ -24,6 +30,11 @@ class Instruction:
         self.iwrite = set(args)
     def ireads(self,*args):
         self.iread = set(args)
+    def inuse(self,register,src_latency,dst_latency):
+        """The register is unavailable as a sourc/dest for other
+        operations, but it's not a read/write hazard and the execution
+        unit can be used for other purposes."""
+        self.inuse_regs[register] = (src_latency,dst_latency)
     def uses(self,unit,latency,ithroughput=1,writethrough=0):
         self.unit = unit
         self.latency = latency
@@ -39,6 +50,16 @@ class Instruction:
         return '%s(%s)' % (self.__class__.__name__,
                            ', '.join([('%s=%r' % (k,v)) for (k,v) in self.saved.items()]))
 
+class nop(Instruction):
+    def __init__(self):
+        Instruction.__init__(self)
+#        self.save(locals(),'rt ra rc rb')
+#        self.reads(ra,rc,rb)
+#        self.writes(rt)
+        self.uses(PPC.FP,1)
+    def run(self,c):
+        pass
+        
 def fpeaddr(ra,x):
     from simasm.ppcasm.ppc import IntRegister
     def chk(addr):
@@ -134,19 +155,6 @@ class fxcpmadd(Instruction):
         c.fp[c.get_fpregister(self.rt)] = FPVal(ra.p * rc.p + rb.p,
                                                 ra.p * rc.s + rb.s)
 
-
-class fxcsmadd(Instruction):
-    def __init__(self,rt,ra,rc,rb):
-        Instruction.__init__(self)
-        self.save(locals(),'rt ra rc rb')
-        self.reads(ra,rc,rb)
-        self.writes(rt)
-        self.uses(PPC.FP,fp_latency)
-    def run(self,c):
-        ra,rc,rb = c.access_fpregisters(self.ra,self.rc,self.rb)
-        c.fp[c.get_fpregister(self.rt)] = FPVal(ra.s * rc.p + rb.p,
-                                                ra.s * rc.s + rb.s)
-
 class fxpmul(Instruction):
     def __init__(self,rt,ra,rc):
         Instruction.__init__(self)
@@ -159,19 +167,7 @@ class fxpmul(Instruction):
         c.fp[c.get_fpregister(self.rt)] = FPVal(ra.p * rc.p,
                                                 ra.p * rc.s)
 
-class fxsmul(Instruction):
-    def __init__(self,rt,ra,rc):
-        Instruction.__init__(self)
-        self.save(locals(),'rt ra rc')
-        self.reads(ra,rc)
-        self.writes(rt)
-        self.uses(PPC.FP,fp_latency)
-    def run(self,c):
-        ra,rc = c.access_fpregisters(self.ra,self.rc)
-        c.fp[c.get_fpregister(self.rt)] = FPVal(ra.s * rc.p,
-                                                ra.s * rc.s)
-
-class fpadd(Instruction):
+class fadd(Instruction):
     def __init__(self,rt,ra,rb):
         Instruction.__init__(self)
         self.save(locals(),'rt ra rb')
@@ -190,6 +186,7 @@ class lfpdux(Instruction):
         self.ireads(ra,rb)
         self.writes(frt)
         self.iwrites(ra)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],c.int[self.rb])
@@ -203,6 +200,7 @@ class lfxdux(Instruction):
         self.ireads(ra,rb)
         self.writes(frt)
         self.iwrites(ra)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],c.int[self.rb])
@@ -216,6 +214,7 @@ class lfpdu(Instruction):
         self.ireads(ra)
         self.writes(frt)
         self.iwrites(ra)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],self.d)
@@ -228,6 +227,7 @@ class lfpd(Instruction):
         self.save(locals(),'frt ra d')
         self.ireads(ra)
         self.writes(frt)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],self.d)
@@ -239,6 +239,7 @@ class lfpdx(Instruction):
         self.save(locals(),'frt ra rb')
         self.ireads(ra,rb)
         self.writes(frt)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr_aligned(c.int[self.ra],c.int[self.rb])
@@ -250,6 +251,7 @@ class lfd(Instruction):
         self.save(locals(),'frt ra d')
         self.ireads(ra)
         self.writes(frt)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],self.d)
@@ -263,6 +265,7 @@ class lfdu(Instruction):
         self.ireads(ra)
         self.writes(frt)
         self.iwrites(ra)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],self.d)
@@ -277,6 +280,7 @@ class lfdux(Instruction):
         self.ireads(ra,rb)
         self.writes(frt)
         self.iwrites(ra)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],c.int[self.rb])
@@ -291,6 +295,7 @@ class lfsdux(Instruction):
         self.ireads(ra,rb)
         self.writes(frt)
         self.iwrites(ra)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],c.int[self.rb])
@@ -304,6 +309,7 @@ class lfdx(Instruction):
         self.save(locals(),'frt ra rb')
         self.ireads(ra,rb)
         self.writes(frt)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],c.int[self.rb])
@@ -316,6 +322,7 @@ class lfsdx(Instruction):
         self.save(locals(),'frt ra rb')
         self.ireads(ra,rb)
         self.writes(frt)
+        self.inuse(frt,fpreg_load_source_latency,fpreg_load_dest_latency)
         self.uses(PPC.LS,load_latency,2)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],c.int[self.rb])
@@ -329,7 +336,8 @@ class stfxdux(Instruction):
         self.reads(frs)
         self.ireads(ra,rb)
         self.iwrites(ra)
-        self.uses(PPC.LS,store_latency,2,writethrough=16)
+        self.inuse(frs,fpreg_store_source_latency,fpreg_store_dest_latency)
+        self.uses(PPC.LS,store_latency,store_cycles,writethrough=16)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],c.int[self.rb])
         (frs,) = c.access_fpregisters(self.frs)
@@ -344,37 +352,11 @@ class stfpdux(Instruction):
         self.reads(frs)
         self.ireads(ra,rb)
         self.iwrites(ra)
-        self.uses(PPC.LS,store_latency,2,writethrough=16)
+        self.inuse(frs,fpreg_store_source_latency,fpreg_store_dest_latency)
+        self.uses(PPC.LS,store_latency,store_cycles,writethrough=16)
     def run(self,c):
         ea = fpeaddr(c.int[self.ra],c.int[self.rb])
         (frs,) = c.access_fpregisters(self.frs)
         c.mem[ea] = frs.p
         c.mem[ea+1] = frs.s
         c.int[self.ra] = IntVal(ea*8)
-
-class stfsdx(Instruction):
-    def __init__(self,frs,ra,rb):
-        Instruction.__init__(self)
-        self.save(locals(),'frs ra rb')
-        self.reads(frs)
-        self.ireads(ra,rb)
-        self.iwrites(ra)
-        self.uses(PPC.LS,store_latency,2,writethrough=16)
-    def run(self,c):
-        ea = fpeaddr(c.int[self.ra],c.int[self.rb])
-        (frs,) = c.access_fpregisters(self.frs)
-        c.mem[ea] = frs.s
-
-class stfdx(Instruction):
-    def __init__(self,frs,ra,rb):
-        Instruction.__init__(self)
-        self.save(locals(),'frs ra rb')
-        self.reads(frs)
-        self.ireads(ra,rb)
-        self.iwrites(ra)
-        self.uses(PPC.LS,store_latency,2,writethrough=16)
-    def run(self,c):
-        ea = fpeaddr(c.int[self.ra],c.int[self.rb])
-        (frs,) = c.access_fpregisters(self.frs)
-        c.mem[ea] = frs.p
-        

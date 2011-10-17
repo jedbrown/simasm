@@ -66,7 +66,8 @@ class Core:
     intregisters = 32
     inline_asm = ''
 
-    def __init__(self,cycle=0,fp=None,int=None,mem=None,use_trace=False):
+    def __init__(self,cycle=0,fp=None,int=None,mem=None,use_trace=False, no_fma=False):
+        self.no_fma = no_fma
         self.cycle = cycle
         self.counter = defaultdict(lambda:0)
         self.fp = fp   if fp  is not None else RegisterFile(FPRegister,Core.fpregisters)
@@ -74,12 +75,16 @@ class Core:
         self.mem = mem if mem is not None else [0.0]*Core.memsize
         self.hazards = Pipeline('Register')
         self.units = Pipeline('Logic Unit')
+        self.inuse_src = Pipeline('Registers unavailable as source (non-hazard)')
+        self.inuse_dst = Pipeline('Registers unavailable as destination (non-hazard)')
         self.writethrough = WriteThrough()
         self.regnames = dict()
         self.fppool = set(self.fp.keys())
         self.fpeternal = set()
         self.trace = self.trace_print if use_trace else self.trace_none
         self.use_trace = use_trace # storing this is a dirty hack, only used externally
+        self.cv = CViewer(self)
+
     def __str__(self):
         return ('Core(cycle=%r,\n\tfp=%s,\n\tint=%s,\n\tmem=%r,\n\tregnames=%s,\n\tcounter=%s)'
                 % (self.cycle,self.fp,self.int,self.mem,self.regnames,dict(self.counter)))
@@ -88,6 +93,8 @@ class Core:
                 % (self.cycle,self.fp,self.int,self.mem,self.regnames))
     def flush_pipeline(self):
         self.hazards.flush()
+        self.inuse_src.flush()
+        self.inuse_dst.flush()
         self.units.flush()
         self.writethrough.flush()
     def name_registers(self,**args):
@@ -102,7 +109,8 @@ class Core:
         elif isinstance(reg,str): # It is a string, find a concrete register
             phys = self.regnames.get(reg)
             if phys is None:
-                if not allocate: raise Exception('Register "%s" has not been allocated' % (reg,))
+                if not allocate: 
+                    raise Exception('Register "%s" has not been allocated' % (reg,))
                 if len(self.fppool) < 1:
                     self.gc()
                 try:
@@ -123,6 +131,8 @@ class Core:
     def next_cycle(self):
         self.cycle += 1
         self.hazards.retire()
+        self.inuse_src.retire()
+        self.inuse_dst.retire()
         self.units.retire()
         self.writethrough.retire()
     def trace_none(self,msg):
@@ -133,18 +143,25 @@ class Core:
         else:
             print('[%2d] -- %s' % (self.cycle,msg))
     def print_inline(self,instr):
-        cv = CViewer(self)
-        self.inline_asm += '%s\n' % cv.named_view(instr)
+        self.inline_asm += '%s\n' % self.cv.named_view(instr)
     def execute_one(self,instr):
         while self.units.stall((instr.unit,)) > 0:
             self.trace('Instruction unit in use: %s' % (instr.unit,))
             self.next_cycle()
-        iread = dict((self.get_fpregister(n),n) for n in instr.read)
-        iwrite = dict((self.get_fpregister(n),n) for n in instr.write)
-        while self.hazards.stall(iread) > 0:
+        while self.hazards.stall(map(self.get_fpregister,instr.read)) > 0:
             def format_hazards(odict):
-                return ', '.join('(%s:%s,%d)' % (iread[reg],reg,cost) for (reg,cost) in odict.items())
-            self.trace('Register hazards: %s' % format_hazards(self.hazards.conflicts(iread)))
+                return ', '.join('(%s:%s,%d)' % (reg,self.get_fpregister(reg,allocate=False),cost) for (reg,cost) in odict.items())
+            self.trace('Register hazards: %s' % format_hazards(self.hazards.conflicts(instr.read)))
+            self.next_cycle()
+        while self.inuse_src.stall(map(self.get_fpregister,instr.read)) > 0:
+            def format_inuse_src(odict):
+                return ', '.join('(%s:%s,%d)' % (reg,self.get_fpregister(reg,allocate=False),cost) for (reg,cost) in odict.items())
+            self.trace('Register inuse_src: %s' % format_inuse_src(self.inuse_src.conflicts(instr.read)))
+            self.next_cycle()
+        while self.inuse_dst.stall(map(self.get_fpregister,instr.write)) > 0:
+            def format_inuse_dst(odict):
+                return ', '.join('(%s:%s,%d)' % (reg,self.get_fpregister(reg,allocate=False),cost) for (reg,cost) in odict.items())
+            self.trace('Register inuse_dst: %s' % format_inuse_dst(self.inuse_dst.conflicts(instr.read)))
             self.next_cycle()
         while self.writethrough.stall(instr.writethrough):
             self.trace('WriteThrough tokens in use')
@@ -154,8 +171,11 @@ class Core:
         self.print_inline(instr)
         self.counter[instr.unit] += 1
         self.units[instr.unit] = instr.ithroughput
-        for reg in iwrite:
+        for reg in instr.write:
             self.hazards[reg] = instr.latency
+        for reg,(src_latency,dst_latency) in instr.inuse_regs.items():
+            self.inuse_src[reg] = src_latency
+            self.inuse_dst[reg] = dst_latency
         self.writethrough.issue(instr.writethrough)
     def execute(self,code):
         cycle_start = self.cycle
@@ -165,6 +185,8 @@ class Core:
     def cost(self,instr):
         cost = max(self.units.stall((instr.unit,)),
                    self.hazards.stall((self.get_fpregister(reg,allocate=False) for reg in instr.read)),
+                   self.inuse_src.stall((self.get_fpregister(reg,allocate=False) for reg in instr.read)),
+                   self.inuse_dst.stall((self.get_fpregister(reg,allocate=False) for reg in instr.write)),
                    self.writethrough.stall(instr.writethrough))
         return cost
     def schedule_one(self,istream):
